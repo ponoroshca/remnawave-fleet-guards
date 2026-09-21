@@ -28,7 +28,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guards_common import Panel, common_args, load_config, node_metrics, telegram_send  # noqa: E402
+from guards_common import Panel, common_args, esc, load_config, node_metrics, telegram_send  # noqa: E402
 
 DEFAULTS = {"load_per_core": 0.80, "mem_free_min": 0.12, "bw_share": 0.70, "silent_mbit": 1.0, "fleet_busy_mbit": 30.0,
             "capacity_mbit": {}, "alt_ips": {}, "parked": {}, "bridge_profiles": [], "chains": []}
@@ -140,7 +140,8 @@ def main():
             print(" ", x)
     else:
         print("всё в норме")
-    body = ("<b>Ноды: есть проблемы</b>\n" + "\n".join(alerts) + "\n\n" if alerts else "<b>Ноды: всё в норме</b>\n") + "<pre>" + "\n".join(table) + "</pre>"
+    body = ("<b>Ноды: есть проблемы</b>\n" + "\n".join(esc(x) for x in alerts) + "\n\n" if alerts else "<b>Ноды: всё в норме</b>\n") \
+        + "<pre>" + "\n".join(esc(x) for x in table) + "</pre>"
     if alerts or a.force:
         telegram_send(cfg["telegram"], body, a.quiet)
     return 1 if alerts else 0

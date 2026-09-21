@@ -27,9 +27,24 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from guards_common import Panel, common_args, load_config, load_state, node_metrics, save_state, telegram_send  # noqa: E402
+from guards_common import Panel, common_args, esc, load_config, load_state, node_metrics, save_state, telegram_send  # noqa: E402
 
 DEFAULTS = {"included_tb_default": 0, "overrides": {}, "marks": [70, 85, 95], "billing": "max"}
+
+
+def billing_period(today, reset_day):
+    """Начало текущего периода хостера, его конец (следующий сброс) и длина в днях.
+    reset_day больше, чем дней в месяце, — сброс в последний день месяца."""
+    def clamp(y, m, d):
+        return dt.date(y, m, min(d, calendar.monthrange(y, m)[1]))
+    reset_day = max(1, int(reset_day or 1))
+    start = clamp(today.year, today.month, reset_day)
+    if today < start:
+        y, m = (today.year - 1, 12) if today.month == 1 else (today.year, today.month - 1)
+        start = clamp(y, m, reset_day)
+    y, m = (start.year + 1, 1) if start.month == 12 else (start.year, start.month + 1)
+    end = clamp(y, m, reset_day)
+    return start, end, (end - start).days
 
 
 def accumulate(state, name, period, rx_total, tx_total, now_utc):
@@ -56,9 +71,7 @@ def main():
     panel = Panel(cfg["panel"]["url"], cfg["panel"]["token"])
     state = load_state(cfg, "traffic.json")
     now_utc = dt.datetime.now(dt.timezone.utc)
-    now = dt.datetime.now()
-    period = now.strftime("%Y-%m")
-    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    today = dt.date.today()
     rows, fired_msgs = [], []
 
     for n in sorted(panel.nodes(), key=lambda x: x.get("name") or ""):
@@ -70,15 +83,14 @@ def main():
             continue
         panel_limit_tb = float(n.get("trafficLimitBytes") or 0) / 1e12
         included = float(tg_cfg["overrides"].get(name) or panel_limit_tb or tg_cfg["included_tb_default"] or 0)
+        # период = от дня сброса счётчика у хостера (trafficResetDay ноды в панели) до следующего сброса
+        start, end, days_in_period = billing_period(today, n.get("trafficResetDay"))
+        period = start.isoformat()
         rec = accumulate(state, name, period, m["rx_total"], m["tx_total"], now_utc)
         if included <= 0:
             continue
         billed_tb = ((rec["rx"] + rec["tx"]) if billing == "sum" else max(rec["rx"], rec["tx"])) / 1e12
-        reset_day = int(n.get("trafficResetDay") or 1)
-        elapsed = now.day - reset_day + 1
-        if elapsed <= 0:
-            elapsed += days_in_month
-        elapsed = float(max(elapsed, 1))
+        elapsed = float(max((today - start).days + 1, 1))
         started_note = ""
         try:
             started = dt.datetime.strptime(rec["started_at"], "%Y-%m-%d %H:%M:%S")
@@ -89,11 +101,11 @@ def main():
         except (ValueError, TypeError):
             pass
         percent = billed_tb / included * 100
-        projected = billed_tb / elapsed * days_in_month
+        projected = billed_tb / elapsed * days_in_period
         projected_pct = projected / included * 100
         over = max(projected - included, 0.0)
-        days_left = max(days_in_month - now.day, 0)
-        rows.append(f"{name:<16} {billed_tb:5.1f}/{included:.0f} ТБ {percent:3.0f}%  прогноз {projected:5.1f} ТБ ({projected_pct:.0f}%)")
+        days_left = max((end - today).days, 0)
+        rows.append(f"{name:<16} {billed_tb:5.1f}/{included:.0f} ТБ {percent:3.0f}%  прогноз {projected:5.1f} ТБ ({projected_pct:.0f}%)  сброс {end:%d.%m}")
         if billed_tb <= 0:
             continue
         eff_pct = max(percent, projected_pct) if elapsed >= 3 else percent
@@ -116,14 +128,14 @@ def main():
             sent.append(key)
         reason += (" · сумма входа и выхода" if billing == "sum" else "") + started_note
         fired_msgs.append(
-            f"📊 <b>Трафик ноды: {reason}</b>\n\n🎯 <b>Нода:</b> {name} ({n.get('address')})\n"
+            f"📊 <b>Трафик ноды: {esc(reason)}</b>\n\n🎯 <b>Нода:</b> {esc(name)} ({esc(n.get('address'))})\n"
             f"📦 <b>Израсходовано:</b> {billed_tb:.1f} ТБ из {included:.0f} ТБ ({percent:.0f}%)\n"
             f"📈 <b>Прогноз к концу месяца:</b> {projected:.1f} ТБ\n💸 <b>Перерасход по прогнозу:</b> {over:.1f} ТБ\n"
             f"🗓 <b>До сброса счётчика:</b> {days_left} дн.\n\n"
             f"Что делать: увести часть трафика на другую ноду, поднять объём у хостера или дождаться сброса.")
 
     save_state(cfg, "traffic.json", state)
-    head = f"трафик за {period} ({'сумма' if billing == 'sum' else 'max направления'}):"
+    head = f"трафик за текущий период ({'сумма' if billing == 'sum' else 'max направления'}):"
     if a.report or a.force:
         print(head)
         print("\n".join("  " + r for r in rows) if rows else "  нет нод с включённым объёмом (overrides / лимит в панели / included_tb_default)")
@@ -131,7 +143,7 @@ def main():
         print("\n" + msg.replace("<b>", "").replace("</b>", ""))
         telegram_send(cfg["telegram"], msg, a.quiet)
     if a.force and rows:
-        telegram_send(cfg["telegram"], "📊 <b>" + head + "</b>\n<pre>" + "\n".join(rows) + "</pre>", a.quiet)
+        telegram_send(cfg["telegram"], "📊 <b>" + head + "</b>\n<pre>" + "\n".join(esc(r) for r in rows) + "</pre>", a.quiet)
     if not (a.report or a.force or fired_msgs):
         print(f"счётчики обновлены ({len(rows)} нод), порогов не пересечено")
     return 0

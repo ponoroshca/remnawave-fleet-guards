@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Общее для сторожей: конфиг, панель Remnawave, Telegram. Только чтение панели."""
 import argparse
+import html
 import ipaddress
 import json
 import os
@@ -149,29 +150,69 @@ def telegram_api(tg, method, params=None, timeout=25):
     return None, str(last)[:100]
 
 
+def esc(s):
+    """Имена нод и адреса идут внутрь HTML-сообщения — «<», «>» и «&» без экранирования ломают доставку."""
+    return html.escape(str(s), quote=False)
+
+
+TG_LIMIT = 4000   # лимит Telegram 4096 символов; большой флот в одно сообщение не влезает
+
+
+def _split_message(text):
+    """Режем по строкам на куски ≤ TG_LIMIT, не разрывая <pre>…</pre>."""
+    if len(text) <= TG_LIMIT:
+        return [text]
+    parts, cur, in_pre = [], "", False
+    for line in text.split("\n"):
+        if len(cur) + len(line) + 1 > TG_LIMIT - 20:
+            parts.append(cur + ("</pre>" if in_pre else ""))
+            cur = ("<pre>" if in_pre else "")
+        cur += (line + "\n")
+        if "<pre>" in line and "</pre>" not in line:
+            in_pre = True
+        if "</pre>" in line:
+            in_pre = False
+    parts.append(cur)
+    return [p for p in parts if p.strip()]
+
+
 def telegram_send(tg, text, quiet=False):
     """Сообщение админу (HTML). Через прокси → напрямую, несколько попыток: с российских
-    серверов api.telegram.org доставляется нестабильно, а одна попытка = потерянная тревога."""
+    серверов api.telegram.org доставляется нестабильно, а одна попытка = потерянная тревога.
+    Длинные отчёты уходят несколькими сообщениями."""
     if quiet or not tg.get("bot_token") or not tg.get("chat_id"):
         print("  telegram: тихо (quiet или не настроен)")
         return False
-    data = urllib.parse.urlencode({"chat_id": tg["chat_id"], "text": text, "parse_mode": "HTML",
-                                   "disable_web_page_preview": "true"}).encode()
-    proxy = tg.get("proxy") or None
-    plan = [proxy, None, proxy, None, None, None] if proxy else [None] * 6
-    last = None
-    for i, p in enumerate(plan):
-        try:
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({"https": p} if p else {}))
-            opener.open(urllib.request.Request(f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage", data=data),
-                        timeout=20).read()
-            print("  telegram: отправлено" + (f" (с {i + 1}-й попытки)" if i else ""))
-            return True
-        except Exception as e:  # noqa: BLE001
-            last = e
-            time.sleep(min(2 + i, 8))
-    print("  telegram НЕ отправился:", str(last)[:100])
-    return False
+    ok_all = True
+    for chunk in _split_message(text):
+        data = urllib.parse.urlencode({"chat_id": tg["chat_id"], "text": chunk, "parse_mode": "HTML",
+                                       "disable_web_page_preview": "true"}).encode()
+        proxy = tg.get("proxy") or None
+        plan = [proxy, None, proxy, None, None, None] if proxy else [None] * 6
+        last, sent = None, False
+        for i, p in enumerate(plan):
+            try:
+                opener = urllib.request.build_opener(urllib.request.ProxyHandler({"https": p} if p else {}))
+                opener.open(urllib.request.Request(f"https://api.telegram.org/bot{tg['bot_token']}/sendMessage", data=data),
+                            timeout=20).read()
+                print("  telegram: отправлено" + (f" (с {i + 1}-й попытки)" if i else ""))
+                sent = True
+                break
+            except urllib.error.HTTPError as e:
+                try:
+                    last = f"{e.code} {json.loads(e.read().decode()).get('description', '')}"
+                except Exception:  # noqa: BLE001
+                    last = f"{e.code}"
+                if e.code == 400:
+                    break          # Telegram отверг текст — повторять бессмысленно
+                time.sleep(min(2 + i, 8))
+            except Exception as e:  # noqa: BLE001
+                last = e
+                time.sleep(min(2 + i, 8))
+        if not sent:
+            print("  telegram НЕ отправился:", str(last)[:120])
+            ok_all = False
+    return ok_all
 
 
 def telegram_detect_chat(tg, wait_s=90):

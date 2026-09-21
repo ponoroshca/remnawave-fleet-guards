@@ -24,6 +24,8 @@ jobs:
       - name: missing config gives exit 2 with a hint
         run: |
           rc=0; python3 node_guard.py --config /tmp/none.json || rc=$?; [ "$rc" -eq 2 ]
+      - name: traffic logic on synthetic dates
+        run: python3 tests/test_traffic_logic.py
       - name: versions match the changelog
         run: |
           v=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | cut -c4-); grep -q "VERSION = \"$v\"" guards_common.py
