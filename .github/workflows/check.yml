@@ -1,0 +1,29 @@
+name: check
+on: [push, pull_request]
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: python syntax
+        run: python3 -m py_compile guards_common.py node_guard.py traffic_guard.py fleet_guards.py
+      - name: shell syntax
+        run: bash -n scripts/*.sh
+      - name: examples are valid JSON
+        run: python3 -c "import json; json.load(open('examples/config.example.json'))"
+      - name: help of every command
+        run: |
+          python3 node_guard.py --help >/dev/null; python3 traffic_guard.py --help >/dev/null
+          python3 fleet_guards.py setup --help >/dev/null; python3 fleet_guards.py doctor --help >/dev/null
+      - name: guards never write to the panel
+        run: |
+          if grep -nE '"(PATCH|POST|DELETE|PUT)"' guards_common.py node_guard.py traffic_guard.py fleet_guards.py; then echo "сторожа должны только читать панель"; exit 1; fi
+      - name: missing config gives exit 2 with a hint
+        run: |
+          rc=0; python3 node_guard.py --config /tmp/none.json || rc=$?; [ "$rc" -eq 2 ]
+      - name: versions match the changelog
+        run: |
+          v=$(grep -m1 -oE '^## [0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md | cut -c4-); grep -q "VERSION = \"$v\"" guards_common.py

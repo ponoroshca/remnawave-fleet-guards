@@ -1,0 +1,11 @@
+[Unit]
+Description=traffic-guard — раз в 30 минут
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

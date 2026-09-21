@@ -1,0 +1,9 @@
+[Unit]
+Description=traffic-guard: трафик нод у хостера с прогнозом
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/fleet-guards/traffic_guard.py --config /etc/fleet-guards/config.json
+TimeoutStartSec=300

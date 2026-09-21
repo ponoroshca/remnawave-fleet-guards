@@ -1,0 +1,26 @@
+{
+  "panel": { "url": "https://panel.example.com", "token": "REMNAWAVE_API_TOKEN" },
+  "telegram": { "bot_token": "123456:TELEGRAM_BOT_TOKEN", "chat_id": 123456789, "proxy": "" },
+  "node_guard": {
+    "report_hour": 21,
+    "load_per_core": 0.8,
+    "mem_free_min": 0.12,
+    "bw_share": 0.7,
+    "silent_mbit": 1.0,
+    "fleet_busy_mbit": 30,
+    "bridge_profiles": ["Bridges"],
+    "capacity_mbit": { "FI-1": 990, "NL-1": 450, "RF-1": 800 },
+    "alt_ips": { "198.51.100.99": "198.51.100.10" },
+    "parked": { "198.51.100.30": "заблокирована по IP, ждём новый адрес" },
+    "chains": [
+      { "name": "белый выход", "entry": "203.0.113.30", "exit": "198.51.100.40", "min_entry_users": 10, "min_exit_mbit": 0.3 }
+    ]
+  },
+  "traffic_guard": {
+    "included_tb_default": 0,
+    "overrides": { "RF-1": 32, "RF-2": 32 },
+    "marks": [70, 85, 95],
+    "billing": "max"
+  },
+  "paths": { "state_dir": "/var/lib/fleet-guards" }
+}

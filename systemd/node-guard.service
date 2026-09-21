@@ -1,0 +1,11 @@
+[Unit]
+Description=node-guard: сторож нод Remnawave (перегруз, память, полоса, «в маршруте, но молчит»)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/fleet-guards/node_guard.py --config /etc/fleet-guards/config.json
+# 1 = нашлись проблемы (штатно, письмо ушло)
+SuccessExitStatus=0 1
+TimeoutStartSec=300
